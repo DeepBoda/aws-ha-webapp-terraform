@@ -30,6 +30,10 @@ variable "allocated_storage" {
   type = number
 }
 
+variable "backup_retention_days" {
+  type = number
+}
+
 variable "multi_az" {
   type = bool
 }

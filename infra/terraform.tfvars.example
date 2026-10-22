@@ -16,4 +16,7 @@ db_instance_class      = "db.t3.micro"
 db_multi_az            = false # true for production
 db_deletion_protection = false # true for production
 
+# Free plan accounts allow 1 day of backups; use 7 or more on a paid account.
+db_backup_retention_days = 1
+
 alarm_email = ""

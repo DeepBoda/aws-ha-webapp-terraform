@@ -33,16 +33,17 @@ module "storage" {
 module "database" {
   source = "./modules/database"
 
-  name                = local.name
-  subnet_ids          = module.network.database_subnet_ids
-  security_group_id   = module.security.db_sg_id
-  instance_class      = var.db_instance_class
-  engine_version      = var.db_engine_version
-  db_name             = var.db_name
-  username            = var.db_username
-  allocated_storage   = var.db_allocated_storage
-  multi_az            = var.db_multi_az
-  deletion_protection = var.db_deletion_protection
+  name                  = local.name
+  subnet_ids            = module.network.database_subnet_ids
+  security_group_id     = module.security.db_sg_id
+  instance_class        = var.db_instance_class
+  engine_version        = var.db_engine_version
+  db_name               = var.db_name
+  username              = var.db_username
+  allocated_storage     = var.db_allocated_storage
+  multi_az              = var.db_multi_az
+  backup_retention_days = var.db_backup_retention_days
+  deletion_protection   = var.db_deletion_protection
 }
 
 module "certificate" {

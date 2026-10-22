@@ -91,6 +91,7 @@ Repository variables (Settings → Secrets and variables → Actions → Variabl
 | `DOMAIN_NAME` | the app hostname |
 | `AWS_REGION` | `ap-south-1` |
 | `ALARM_EMAIL` | optional, for alarm emails |
+| `DB_BACKUP_RETENTION_DAYS` | optional, defaults to 7; set 1 on an AWS Free plan account |
 
 Create an environment called `production` (add required reviewers for a manual approval before apply). No AWS keys are stored in GitHub: each run gets short-lived credentials through OIDC.
 

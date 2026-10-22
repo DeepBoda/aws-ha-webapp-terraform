@@ -122,6 +122,12 @@ variable "db_multi_az" {
   default     = false
 }
 
+variable "db_backup_retention_days" {
+  description = "Days of automated RDS backups. AWS Free plan accounts are limited to 1."
+  type        = number
+  default     = 7
+}
+
 variable "db_deletion_protection" {
   description = "Protect the database from deletion. Turn off before terraform destroy."
   type        = bool

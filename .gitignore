@@ -12,3 +12,4 @@ override.tf
 node_modules/
 app-*.tgz
 .DS_Store
+*.log
