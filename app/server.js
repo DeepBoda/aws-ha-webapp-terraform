@@ -79,7 +79,7 @@ async function dbCheck(record) {
       const { id, az } = await instanceInfo();
       await p.query("INSERT INTO visits (instance_id, az) VALUES (?, ?)", [id, az]);
     }
-    const [[row]] = await p.query("SELECT COUNT(*) AS visits, @@version AS version");
+    const [[row]] = await p.query("SELECT COUNT(*) AS visits, @@version AS version FROM visits");
     const [[tls]] = await p.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'");
     const [byAz] = await p.query("SELECT az, COUNT(*) AS n FROM visits GROUP BY az ORDER BY az");
     return {

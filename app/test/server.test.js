@@ -59,3 +59,8 @@ test("responses carry a strict content security policy", async () => {
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /frame-ancestors 'none'/);
 });
+
+test("the visit count query reads the visits table", () => {
+  const src = require("node:fs").readFileSync(require.resolve("../server"), "utf8");
+  assert.match(src, /COUNT\(\*\) AS visits[^"]*FROM visits/);
+});
