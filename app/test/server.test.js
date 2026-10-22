@@ -35,3 +35,27 @@ test("/api/info returns the instance, release and checks", async () => {
 test("unknown routes are 404", async () => {
   assert.equal((await fetch(`${base}/nope`)).status, 404);
 });
+
+test("/api/instance returns only the serving instance", async () => {
+  const body = await (await fetch(`${base}/api/instance`)).json();
+  assert.ok(body.id && body.az && body.version);
+  assert.equal(body.db, undefined);
+});
+
+test("page assets are served with a content type and cache", async () => {
+  const res = await fetch(`${base}/assets/app.css?v=1`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /text\/css/);
+  assert.match(res.headers.get("cache-control"), /max-age/);
+});
+
+test("only listed assets are served", async () => {
+  assert.equal((await fetch(`${base}/assets/..%2Fserver.js`)).status, 404);
+  assert.equal((await fetch(`${base}/assets/index.html`)).status, 404);
+});
+
+test("responses carry a strict content security policy", async () => {
+  const csp = (await fetch(`${base}/`)).headers.get("content-security-policy");
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+});

@@ -63,7 +63,7 @@ jobs:
           VERSION="${GITHUB_SHA::12}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           npm ci --omit=dev
-          tar -czf "app-$VERSION.tgz" server.js package.json node_modules
+          tar -czf "app-$VERSION.tgz" server.js package.json public node_modules
 
       - name: upload release and select it
         run: |

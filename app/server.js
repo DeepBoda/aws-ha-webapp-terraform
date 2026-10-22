@@ -1,14 +1,17 @@
 // Demo application for the stack. No framework: node:http plus the MySQL and AWS SDK clients.
 //
-//   GET /            HTML page: serving instance and AZ, release, database and storage checks
-//   GET /health      liveness for the ALB, never touches the database
-//   GET /health/db   database readiness (SELECT 1 over TLS)
-//   GET /api/info    the same facts as the page, as JSON
+//   GET /              status page: serving instance and AZ, release, database and storage checks
+//   GET /health        liveness for the ALB, never touches the database
+//   GET /health/db     database readiness over TLS
+//   GET /api/info      the same facts as the page, as JSON
+//   GET /api/instance  just the serving instance, cheap enough for the in-page burst test
+//   GET /assets/*      page CSS, JS and icon from public/
 //
 // Configuration comes from the environment set by the instance's systemd unit.
 
 const http = require("node:http");
 const fs = require("node:fs");
+const path = require("node:path");
 
 const cfg = {
   port: Number(process.env.PORT || 8080),
@@ -78,7 +81,14 @@ async function dbCheck(record) {
     }
     const [[row]] = await p.query("SELECT COUNT(*) AS visits, @@version AS version");
     const [[tls]] = await p.query("SHOW SESSION STATUS LIKE 'Ssl_cipher'");
-    return { ok: true, visits: Number(row.visits), mysql: row.version, tls: tls.Value || "none" };
+    const [byAz] = await p.query("SELECT az, COUNT(*) AS n FROM visits GROUP BY az ORDER BY az");
+    return {
+      ok: true,
+      visits: Number(row.visits),
+      byAz: byAz.map((r) => ({ az: r.az, n: Number(r.n) })),
+      mysql: row.version,
+      tls: tls.Value || "none",
+    };
   } catch (err) {
     pool = null; // rebuild next time, for example after a credential rotation
     return { ok: false, detail: err.code || err.message };
@@ -105,34 +115,42 @@ async function storageCheck() {
 
 // ---- HTTP ----
 
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Static files are read once at start; only these names are ever served.
+const publicDir = path.join(__dirname, "public");
+const assets = {
+  "app.css": "text/css; charset=utf-8",
+  "app.js": "text/javascript; charset=utf-8",
+  "favicon.svg": "image/svg+xml",
+};
+const files = Object.fromEntries(
+  Object.keys(assets).map((name) => [name, fs.readFileSync(path.join(publicDir, name))])
+);
+const template = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
 
 function page(info) {
-  const row = (k, v, ok) => `<tr><th>${esc(k)}</th><td>${ok === undefined ? "" : `<span class="${ok ? "ok" : "bad"}">${ok ? "OK" : "FAIL"}</span> `}${esc(v)}</td></tr>`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HA web app on AWS</title>
-<style>
-body{font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;margin:0;background:#f5f5f7;color:#1d1d1f}
-main{max-width:720px;margin:48px auto;padding:0 20px}
-h1{font-size:26px;margin:0 0 4px}p{color:#6e6e73;margin:0 0 24px}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
-th,td{text-align:left;padding:12px 16px;border-bottom:1px solid #e5e5ea;vertical-align:top}
-th{width:34%;color:#6e6e73;font-weight:500}
-.ok,.bad{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:99px;margin-right:6px}
-.ok{background:#e3f6e8;color:#1b7f3a}.bad{background:#fde8e8;color:#b42318}
-code{font:13px ui-monospace,Menlo,monospace}
-</style></head><body><main>
-<h1>Highly available web app on AWS</h1>
-<p>ALB (HTTPS) &rarr; Auto Scaling EC2 in private subnets &rarr; RDS MySQL, all built with Terraform and deployed by GitHub Actions. Refresh to see requests land on different instances.</p>
-<table>
-${row("Served by instance", info.instance.id)}
-${row("Availability Zone", info.instance.az)}
-${row("Release", info.version)}
-${row("Database (MySQL over TLS)", info.db.ok ? `${info.db.mysql}, cipher ${info.db.tls}, ${info.db.visits} visits recorded` : info.db.detail, info.db.ok)}
-${row("S3 application storage", info.storage.ok ? info.storage.key : info.storage.detail, info.storage.ok)}
-${row("Time", info.time)}
-</table>
-</main></body></html>`;
+  const { db: d, storage: st } = info;
+  const vars = {
+    version: info.version,
+    region: cfg.region,
+    instanceId: info.instance.id,
+    az: info.instance.az,
+    time: info.time,
+    overallClass: d.ok && st.ok ? "ok" : "warn",
+    overallText: d.ok && st.ok ? "All systems operational" : "Degraded",
+    dbClass: d.ok ? "ok" : "bad",
+    dbBadge: d.ok ? "OK" : "FAIL",
+    dbText: d.ok ? `MySQL ${d.mysql}, reached over a verified TLS connection.` : `Unreachable: ${d.detail}`,
+    dbCipher: d.ok ? `cipher ${d.tls}` : "",
+    s3Class: st.ok ? "ok" : "bad",
+    s3Badge: st.ok ? "OK" : "FAIL",
+    s3Text: st.ok ? "Wrote an object to S3 and read it back through the VPC endpoint." : `Failed: ${st.detail}`,
+    s3Key: st.ok ? st.key : "",
+    visits: d.ok ? d.visits.toLocaleString("en-US") : "0",
+    boot: JSON.stringify(info),
+  };
+  return template.replace(/\{\{(\w+)\}\}/g, (_, k) => esc(vars[k] ?? ""));
 }
 
 async function info(record) {
@@ -140,13 +158,17 @@ async function info(record) {
   return { instance: inst, version: cfg.version, db: dbs, storage: st, time: new Date().toISOString() };
 }
 
-function send(res, status, type, body) {
-  res.writeHead(status, {
-    "content-type": type,
-    "cache-control": "no-store",
-    "x-content-type-options": "nosniff",
-    "strict-transport-security": "max-age=31536000",
-  });
+const securityHeaders = {
+  "x-content-type-options": "nosniff",
+  "strict-transport-security": "max-age=31536000",
+  "content-security-policy":
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  "referrer-policy": "no-referrer",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+
+function send(res, status, type, body, cache = "no-store") {
+  res.writeHead(status, { "content-type": type, "cache-control": cache, ...securityHeaders });
   res.end(body);
 }
 
@@ -159,6 +181,14 @@ const server = http.createServer(async (req, res) => {
       return send(res, d.ok ? 200 : 503, "application/json", JSON.stringify(d));
     }
     if (url === "/api/info") return send(res, 200, "application/json", JSON.stringify(await info(false)));
+    if (url === "/api/instance") {
+      return send(res, 200, "application/json", JSON.stringify({ ...(await instanceInfo()), version: cfg.version }));
+    }
+    if (url.startsWith("/assets/")) {
+      const name = url.slice("/assets/".length);
+      // Assets are versioned by the ?v= query, so a day of browser caching is safe.
+      if (Object.hasOwn(assets, name)) return send(res, 200, assets[name], files[name], "public, max-age=86400");
+    }
     if (url === "/") return send(res, 200, "text/html; charset=utf-8", page(await info(true)));
     return send(res, 404, "application/json", '{"error":"not found"}');
   } catch (err) {
