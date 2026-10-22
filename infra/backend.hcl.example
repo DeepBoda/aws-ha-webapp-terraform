@@ -1,0 +1,2 @@
+bucket = "<state bucket from bootstrap output>"
+region = "ap-south-1"

@@ -1,0 +1,68 @@
+#!/bin/bash
+# Boot script for application instances (Amazon Linux 2023).
+# Installs Node.js, fetches the release named in SSM, and runs it under systemd
+# as an unprivileged user. Secrets are never written to disk: the app reads the
+# database credentials from Secrets Manager at runtime with its instance role.
+set -euo pipefail
+exec > >(tee /var/log/app-bootstrap.log) 2>&1
+
+REGION="${region}"
+dnf install -y -q nodejs22 || dnf install -y -q nodejs20 || dnf install -y -q nodejs
+NODE_BIN="$(command -v node-22 || command -v node-20 || command -v node)"
+
+id app >/dev/null 2>&1 || useradd --system --shell /sbin/nologin --home-dir /opt/app app
+mkdir -p /opt/app /etc/app
+
+# CA bundle so the app verifies the RDS certificate (the database requires TLS).
+curl -fsSL "https://truststore.pki.rds.amazonaws.com/$REGION/$REGION-bundle.pem" -o /etc/app/rds-ca.pem
+
+VERSION="$(aws ssm get-parameter --region "$REGION" --name "${version_param}" --query Parameter.Value --output text)"
+
+if [ "$VERSION" != "none" ]; then
+  aws s3 cp --region "$REGION" "s3://${app_bucket}/releases/app-$VERSION.tgz" /tmp/app.tgz
+  tar -xzf /tmp/app.tgz -C /opt/app
+else
+  # No release yet: serve a placeholder that passes the ALB health check.
+  cat > /opt/app/server.js <<'JS'
+const http = require("node:http");
+http.createServer((req, res) => {
+  const body = req.url === "/health" ? '{"status":"ok","release":"none"}' : "Infrastructure is up. Waiting for the first application release.";
+  res.writeHead(200, { "content-type": req.url === "/health" ? "application/json" : "text/plain" });
+  res.end(body);
+}).listen(Number(process.env.PORT));
+JS
+fi
+chown -R app:app /opt/app
+
+cat > /etc/systemd/system/app.service <<UNIT
+[Unit]
+Description=Web application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=app
+WorkingDirectory=/opt/app
+ExecStart=$NODE_BIN /opt/app/server.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+Environment=PORT=${app_port}
+Environment=AWS_REGION=$REGION
+Environment=APP_VERSION=$VERSION
+Environment=APP_BUCKET=${app_bucket}
+Environment=DB_HOST=${db_host}
+Environment=DB_NAME=${db_name}
+Environment=DB_SECRET_ARN=${db_secret_arn}
+Environment=DB_CA_PATH=/etc/app/rds-ca.pem
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now app.service

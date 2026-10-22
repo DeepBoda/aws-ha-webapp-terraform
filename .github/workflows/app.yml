@@ -1,0 +1,102 @@
+name: application
+
+# Pull request: install and test.
+# Push to main: test, package the release with production dependencies, upload it to S3,
+# point the SSM version parameter at it, roll the Auto Scaling Group with an instance
+# refresh (half the fleet stays in service), then confirm the new release is live.
+
+on:
+  pull_request:
+    paths: ["app/**", ".github/workflows/app.yml"]
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/app.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: app-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  NAME: ${{ vars.PROJECT || 'webapp' }}-${{ vars.ENVIRONMENT || 'prod' }}
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: package release
+        run: |
+          VERSION="${GITHUB_SHA::12}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          npm ci --omit=dev
+          tar -czf "app-$VERSION.tgz" server.js package.json node_modules
+
+      - name: upload release and select it
+        run: |
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          aws s3 cp "app-$VERSION.tgz" "s3://$NAME-app-$ACCOUNT/releases/app-$VERSION.tgz"
+          aws ssm put-parameter --name "/$NAME/app/version" --value "$VERSION" --type String --overwrite
+
+      - name: rolling instance refresh
+        run: |
+          ID="$(aws autoscaling start-instance-refresh --auto-scaling-group-name "$NAME-app" \
+                --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":120}' \
+                --query InstanceRefreshId --output text)"
+          echo "instance refresh $ID"
+          for i in $(seq 1 60); do
+            STATUS="$(aws autoscaling describe-instance-refreshes --auto-scaling-group-name "$NAME-app" \
+                      --instance-refresh-ids "$ID" --query 'InstanceRefreshes[0].[Status,PercentageComplete]' --output text)"
+            echo "$STATUS"
+            case "$STATUS" in
+              Successful*) exit 0 ;;
+              Failed*|Cancelled*|RollbackSuccessful*) echo "::error::instance refresh $STATUS"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::instance refresh timed out"; exit 1
+
+      - name: verify the new release is live on every instance
+        run: |
+          url="https://${{ vars.DOMAIN_NAME }}/api/info"
+          seen=0
+          for i in $(seq 1 20); do
+            v="$(curl -fsS --max-time 10 "$url" | jq -r .version || true)"
+            if [ "$v" = "$VERSION" ]; then seen=$((seen + 1)); else seen=0; echo "got '$v', expected $VERSION"; fi
+            [ "$seen" -ge 6 ] && { echo "release $VERSION is live"; exit 0; }
+            sleep 5
+          done
+          echo "::error::release $VERSION not consistently served"; exit 1

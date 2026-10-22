@@ -1,0 +1,19 @@
+project     = "webapp"
+environment = "prod"
+region      = "ap-south-1"
+
+# The app is served here over HTTPS. With create_dns_zone = true, Terraform creates a
+# Route 53 zone for this name; delegate it once from the parent domain (NS records).
+domain_name     = "app.example.com"
+create_dns_zone = true
+
+instance_type        = "t3.micro"
+asg_min_size         = 2
+asg_desired_capacity = 2
+asg_max_size         = 4
+
+db_instance_class      = "db.t3.micro"
+db_multi_az            = false # true for production
+db_deletion_protection = false # true for production
+
+alarm_email = ""

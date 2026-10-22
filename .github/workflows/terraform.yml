@@ -1,0 +1,111 @@
+name: infrastructure
+
+# Pull request: format, validate, lint and plan (plan shown in the run summary).
+# Push to main: the same checks, then apply the reviewed plan in the "production"
+# environment and verify the site answers over HTTPS.
+
+on:
+  pull_request:
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC: short-lived AWS credentials, no stored keys
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false # never interrupt an apply
+
+env:
+  TF_VERSION: 1.13.3
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+  TF_IN_AUTOMATION: "true"
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  checks:
+    name: fmt, validate, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - uses: terraform-linters/setup-tflint@v4
+      - run: tflint --init && tflint --recursive --format compact
+
+  plan:
+    name: plan
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: init
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="region=${{ env.AWS_REGION }}"
+      - name: plan
+        run: |
+          terraform plan -input=false -lock-timeout=5m -out=tfplan
+          {
+            echo '### Terraform plan'
+            echo '```'
+            terraform show -no-color tfplan | grep -E '^(Plan:|No changes)|will be (created|destroyed|updated|replaced)' | sed 's/^ *# //'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/tfplan
+          retention-days: 3
+
+  apply:
+    name: apply
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: production # add required reviewers here for a manual gate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra
+      - name: init
+        run: terraform init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="region=${{ env.AWS_REGION }}"
+      - name: apply the reviewed plan
+        run: terraform apply -input=false -lock-timeout=5m tfplan
+      - name: verify HTTPS and the health check
+        run: |
+          url="https://${{ vars.DOMAIN_NAME }}/health"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$url"; then echo; echo "healthy: $url"; exit 0; fi
+            echo "waiting for $url ($i/30)"; sleep 20
+          done
+          echo "::error::$url did not become healthy"; exit 1
