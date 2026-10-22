@@ -25,6 +25,7 @@ env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
   TF_VAR_domain_name: ${{ vars.DOMAIN_NAME }}
   TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+  TF_VAR_create_dns_zone: ${{ vars.CREATE_DNS_ZONE || 'true' }}
   TF_VAR_db_backup_retention_days: ${{ vars.DB_BACKUP_RETENTION_DAYS || 7 }}
   TF_IN_AUTOMATION: "true"
 
