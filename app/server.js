@@ -3,8 +3,9 @@
 //   GET /              status page: serving instance and AZ, release, database and storage checks
 //   GET /health        liveness for the ALB, never touches the database
 //   GET /health/db     database readiness over TLS
-//   GET /api/info      the same facts as the page, as JSON
-//   GET /api/instance  just the serving instance, cheap enough for the in-page burst test
+//   GET /api/info      the same facts as the page, as JSON (?record=1 also counts a visit)
+//   GET /api/instance  just the serving instance, cheap enough for the burst test
+//                      (?record=1 also counts a visit, so bursts show up in MySQL)
 //   GET /assets/*      page CSS, JS and icon from public/
 //
 // Configuration comes from the environment set by the instance's systemd unit.
@@ -69,6 +70,20 @@ async function db() {
     "CREATE TABLE IF NOT EXISTS visits (id BIGINT AUTO_INCREMENT PRIMARY KEY, instance_id VARCHAR(32), az VARCHAR(32), at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
   );
   return pool;
+}
+
+// One INSERT and nothing else, so burst requests stay fast.
+async function recordVisit() {
+  try {
+    const p = await db();
+    if (!p) return false;
+    const { id, az } = await instanceInfo();
+    await p.query("INSERT INTO visits (instance_id, az) VALUES (?, ?)", [id, az]);
+    return true;
+  } catch {
+    pool = null;
+    return false;
+  }
 }
 
 async function dbCheck(record) {
@@ -173,16 +188,18 @@ function send(res, status, type, body, cache = "no-store") {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = req.url.split("?")[0];
+  const [url, query = ""] = req.url.split("?");
+  const record = new URLSearchParams(query).get("record") === "1";
   try {
     if (url === "/health") return send(res, 200, "application/json", JSON.stringify({ status: "ok", version: cfg.version }));
     if (url === "/health/db") {
       const d = await dbCheck(false);
       return send(res, d.ok ? 200 : 503, "application/json", JSON.stringify(d));
     }
-    if (url === "/api/info") return send(res, 200, "application/json", JSON.stringify(await info(false)));
+    if (url === "/api/info") return send(res, 200, "application/json", JSON.stringify(await info(record)));
     if (url === "/api/instance") {
-      return send(res, 200, "application/json", JSON.stringify({ ...(await instanceInfo()), version: cfg.version }));
+      const recorded = record ? await recordVisit() : false;
+      return send(res, 200, "application/json", JSON.stringify({ ...(await instanceInfo()), version: cfg.version, recorded }));
     }
     if (url.startsWith("/assets/")) {
       const name = url.slice("/assets/".length);

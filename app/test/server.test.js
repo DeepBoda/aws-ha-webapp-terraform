@@ -64,3 +64,8 @@ test("the visit count query reads the visits table", () => {
   const src = require("node:fs").readFileSync(require.resolve("../server"), "utf8");
   assert.match(src, /COUNT\(\*\) AS visits[^"]*FROM visits/);
 });
+
+test("/api/instance?record=1 reports whether the visit was stored", async () => {
+  const body = await (await fetch(`${base}/api/instance?record=1`)).json();
+  assert.equal(body.recorded, false); // no database in tests
+});

@@ -16,7 +16,8 @@
   --warn-bg: rgba(194, 120, 3, 0.14);
   --glow: rgba(91, 91, 246, 0.35);
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
-  --radius: 16px;
+  --radius: 22px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -227,11 +228,19 @@ h1 {
 
 .flash { animation: flash 0.6s ease; }
 
+/* Sections rise in once as they scroll into view (only when JS is running) */
+.js .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.8s var(--ease), transform 0.8s var(--ease); }
+.js .reveal.in { opacity: 1; transform: none; }
+.hero > * { animation: rise 0.9s var(--ease) both; }
+.hero > :nth-child(2) { animation-delay: 0.06s; }
+.hero > :nth-child(3) { animation-delay: 0.12s; }
+.hero > :nth-child(4) { animation-delay: 0.18s; }
+
 /* Buttons */
 .btn {
   appearance: none;
   border: 0;
-  border-radius: 12px;
+  border-radius: 999px;
   padding: 11px 18px;
   font: inherit;
   font-size: 15px;
@@ -263,11 +272,12 @@ h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.02em; }
   padding: 24px;
 }
 .node {
+  --radius: 14px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--card-solid);
   min-width: 0;
@@ -303,7 +313,8 @@ h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.02em; }
 /* Checks */
 .grid { display: grid; gap: 16px; }
 .checks { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.check { padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.check { padding: 20px; display: flex; flex-direction: column; gap: 8px; transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease); }
+.check:hover { transform: translateY(-3px); box-shadow: var(--shadow), 0 18px 40px -20px var(--glow); }
 .check header { display: flex; align-items: center; gap: 10px; }
 .check h3 { margin: 0; font-size: 16px; }
 .check p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
@@ -323,11 +334,11 @@ h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.02em; }
 .bar-label b { display: block; font-size: 14px; }
 .bar-label span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-track { height: 12px; border-radius: 999px; background: var(--bg-2); overflow: hidden; border: 1px solid var(--line); }
-.bar-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.35s ease; }
-.bar-row:nth-child(2n) .bar-fill { background: linear-gradient(90deg, var(--accent-2), var(--ok)); }
+.bar-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.6s var(--ease); }
+.bar-row.alt .bar-fill { background: linear-gradient(90deg, var(--accent-2), var(--ok)); }
 .bar-num { text-align: right; font-family: var(--mono); font-size: 13px; color: var(--muted); }
 .ticks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 16px; min-height: 10px; }
-.tick { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); animation: pop 0.25s ease; }
+.tick { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); animation: pop 0.3s var(--ease); }
 .tick.b { background: var(--accent-2); }
 .tick.x { background: var(--bad); }
 .empty { color: var(--muted); font-size: 14px; margin: 0; }
@@ -365,6 +376,7 @@ h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); letter-spacing: -0.02em; }
 @keyframes travel-x { from { left: 0; } to { left: calc(100% - 8px); } }
 @keyframes travel-y { from { top: 0; } to { top: calc(100% - 8px); } }
 @keyframes pop { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes flash { 0% { box-shadow: 0 0 0 0 var(--glow); } 100% { box-shadow: var(--shadow); } }
 
 /* Tablet: checks two per row, request path stacks */

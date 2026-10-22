@@ -1,12 +1,17 @@
 // Progressive enhancement for the status page. The page is fully rendered by the server;
-// this adds the theme switch, live round-trip time, instance discovery and the burst test.
+// this adds the theme switch, live round-trip time, instance discovery, the burst test
+// and live visit counts.
 (() => {
   "use strict";
 
   const $ = (sel) => document.querySelector(sel);
   const boot = JSON.parse(document.body.dataset.boot || "{}");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const zones = new Map(); // az -> Set of instance ids seen
+  const visits = { total: 0, byAz: new Map() };
   let current = boot.instance || {};
+
+  document.documentElement.classList.add("js");
 
   // ---- Theme: follow the system until the visitor picks one ----
   const store = {
@@ -23,6 +28,16 @@
     document.documentElement.dataset.theme = next;
     store.set("theme", next);
   });
+
+  // ---- Sections fade up as they scroll into view ----
+  if ("IntersectionObserver" in window && !reduceMotion) {
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      }
+    }, { rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll("main > section").forEach((s) => { s.classList.add("reveal"); io.observe(s); });
+  }
 
   // ---- Helpers ----
   async function timed(url) {
@@ -42,6 +57,23 @@
     if (text !== undefined) n.textContent = text;
     return n;
   };
+  const zoneIndex = (az) => [...zones.keys()].sort().indexOf(az);
+
+  // Eases a number from what is shown to the new value.
+  function countTo(node, to) {
+    const from = Number(node.dataset.value || node.textContent.replace(/\D/g, "")) || 0;
+    node.dataset.value = to;
+    if (reduceMotion || from === to) { node.textContent = to.toLocaleString(); return; }
+    const t0 = performance.now();
+    const dur = 600;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      const eased = 1 - Math.pow(1 - k, 3);
+      node.textContent = Math.round(from + (to - from) * eased).toLocaleString();
+      if (k < 1 && node.dataset.value == to) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
 
   // ---- Request path: one slot per zone, the serving one glows ----
   function remember(inst) {
@@ -59,8 +91,7 @@
       if (!az) return;
       const ids = [...zones.get(az)];
       node.querySelector(".az-name").textContent = az;
-      node.querySelector(".inst-id").textContent =
-        ids.length > 1 ? `${ids.length} instances` : ids[0];
+      node.querySelector(".inst-id").textContent = ids.length > 1 ? `${ids.length} instances seen` : ids[0];
     });
   }
 
@@ -104,64 +135,95 @@
     pill.title = pill.querySelector("span").textContent;
   }
 
-  // ---- Bars (shared by the burst test and the visits panel) ----
+  // ---- Bars: rows are keyed, so updates slide instead of redrawing ----
   function drawBars(target, rows, total, unit) {
-    target.replaceChildren();
     if (!rows.length) {
-      target.append(el("p", "empty", "No data yet."));
+      if (!target.querySelector(".empty")) target.replaceChildren(el("p", "empty", "No data yet."));
       return;
     }
+    target.querySelector(".empty")?.remove();
+    const keep = new Set();
     for (const r of rows) {
-      const row = el("div", "bar-row");
-      const label = el("div", "bar-label");
-      label.append(el("b", "", r.title), el("span", "mono", r.sub));
-      const track = el("div", "bar-track");
-      const fill = el("div", "bar-fill");
-      track.append(fill);
-      row.append(label, track, el("span", "bar-num", `${r.n} ${unit}`));
-      target.append(row);
-      requestAnimationFrame(() => { fill.style.width = `${total ? (r.n / total) * 100 : 0}%`; });
+      keep.add(r.key);
+      let row = target.querySelector(`[data-key="${CSS.escape(r.key)}"]`);
+      if (!row) {
+        row = el("div", "bar-row");
+        row.dataset.key = r.key;
+        const label = el("div", "bar-label");
+        label.append(el("b"), el("span", "mono"));
+        const track = el("div", "bar-track");
+        track.append(el("div", "bar-fill"));
+        row.append(label, track, el("span", "bar-num"));
+        target.append(row);
+      }
+      row.classList.toggle("alt", zoneIndex(r.az) % 2 === 1);
+      row.querySelector("b").textContent = r.title;
+      row.querySelector(".bar-label span").textContent = r.sub;
+      row.querySelector(".bar-num").textContent = `${r.n.toLocaleString()}${unit ? ` ${unit}` : ""}`;
+      const fill = row.querySelector(".bar-fill");
+      requestAnimationFrame(() => { fill.style.width = `${total ? Math.min(100, (r.n / total) * 100) : 0}%`; });
     }
+    target.querySelectorAll(".bar-row").forEach((row) => { if (!keep.has(row.dataset.key)) row.remove(); });
+    [...target.querySelectorAll(".bar-row")]
+      .sort((a, b) => a.dataset.key.localeCompare(b.dataset.key))
+      .forEach((row) => target.append(row));
   }
 
-  function showVisits(db) {
+  // ---- Visits: server totals, bumped locally as burst requests are recorded ----
+  function setVisits(db) {
     if (!db || !db.ok) return;
-    $("#visits-total").textContent = db.visits.toLocaleString();
-    const rows = (db.byAz || []).map((z) => ({ title: z.az, sub: "page views recorded", n: z.n }));
-    drawBars($("#visits-bars"), rows, db.visits, "");
+    visits.total = db.visits;
+    visits.byAz = new Map((db.byAz || []).map((z) => [z.az, z.n]));
+    drawVisits();
+  }
+
+  function bumpVisit(az) {
+    visits.total++;
+    visits.byAz.set(az, (visits.byAz.get(az) || 0) + 1);
+    drawVisits();
+  }
+
+  function drawVisits() {
+    countTo($("#visits-total"), visits.total);
+    const rows = [...visits.byAz.entries()].map(([az, n]) => ({
+      key: az, az, title: az, sub: `${visits.total ? Math.round((n / visits.total) * 100) : 0}% of all visits`, n,
+    }));
+    drawBars($("#visits-bars"), rows, visits.total, "");
+  }
+
+  async function syncFromServer() {
+    try {
+      const { body } = await timed("/api/info");
+      setVisits(body.db);
+      showChecks(body);
+    } catch { /* keep what is shown */ }
   }
 
   // ---- Discovery: a few quick requests to find every healthy instance ----
   async function discover(count) {
-    const seen = [];
     for (let i = 0; i < count; i++) {
-      try {
-        const { body } = await timed("/api/instance");
-        remember(body);
-        seen.push(body);
-      } catch { /* ignore a dropped request */ }
+      try { remember((await timed("/api/instance")).body); } catch { /* dropped request */ }
     }
     drawZones();
-    return seen;
   }
 
-  // ---- Burst test: N requests, a few at a time, counted per instance ----
+  // ---- Burst test: N recorded requests, a few at a time, counted per instance ----
   async function burst(n, parallel) {
     const btn = $("#burst");
     const status = $("#burst-status");
     const ticks = $("#ticks");
     const per = new Map(); // id -> { az, n, ms[] }
-    const order = [];
     let done = 0;
     let failed = 0;
     btn.disabled = true;
     ticks.replaceChildren();
+    $("#bars").replaceChildren();
     status.textContent = `Sending ${n} requests…`;
 
     const draw = () => {
-      const rows = [...per.entries()]
-        .sort((a, b) => a[1].az.localeCompare(b[1].az) || a[0].localeCompare(b[0]))
-        .map(([id, v]) => ({ title: v.az, sub: `${shortId(id)} · median ${Math.round(median(v.ms))} ms`, n: v.n }));
+      const rows = [...per.entries()].map(([id, v]) => ({
+        key: `${v.az} ${id}`, az: v.az, title: v.az, sub: `${shortId(id)} · median ${Math.round(median(v.ms))} ms`, n: v.n,
+      }));
       drawBars($("#bars"), rows, done - failed, "req");
     };
 
@@ -169,20 +231,21 @@
     async function worker() {
       while (next < n) {
         next++;
-        let cls = "tick x";
+        const tick = el("span", "tick x");
         try {
-          const { body, ms } = await timed("/api/instance");
+          const { body, ms } = await timed("/api/instance?record=1");
           remember(body);
-          if (!per.has(body.id)) { per.set(body.id, { az: body.az, n: 0, ms: [] }); order.push(body.az); }
+          if (!per.has(body.id)) per.set(body.id, { az: body.az, n: 0, ms: [] });
           const v = per.get(body.id);
           v.n++;
           v.ms.push(ms);
-          cls = [...new Set(order)].sort().indexOf(body.az) % 2 ? "tick b" : "tick";
+          tick.className = zoneIndex(body.az) % 2 ? "tick b" : "tick";
+          if (body.recorded) bumpVisit(body.az);
         } catch {
           failed++;
         }
         done++;
-        ticks.append(el("span", cls));
+        ticks.append(tick);
         status.textContent = `${done} of ${n} answered`;
         draw();
       }
@@ -191,33 +254,37 @@
 
     const all = [...per.values()].flatMap((v) => v.ms);
     const azCount = new Set([...per.values()].map((v) => v.az)).size;
-    status.textContent =
+    let msg =
       `${n - failed} of ${n} answered by ${per.size} instance${per.size === 1 ? "" : "s"} ` +
       `in ${azCount} zone${azCount === 1 ? "" : "s"}, median ${Math.round(median(all))} ms` +
-      (failed ? `, ${failed} failed` : "");
+      (failed ? `, ${failed} failed` : "") + ".";
+    if (per.size === 1) msg += " Only one instance is in service right now, for example during a rolling deploy.";
+    status.textContent = msg;
     btn.textContent = `Send ${n} more`;
     btn.disabled = false;
     drawZones();
+    syncFromServer(); // settle on the database's own totals
   }
 
   // ---- Wire up ----
   remember(current);
   drawZones();
-  showVisits(boot.db);
-  if (!(boot.db && boot.db.ok)) drawBars($("#visits-bars"), [], 0, "");
+  if (boot.db && boot.db.ok) setVisits(boot.db);
+  else drawBars($("#visits-bars"), [], 0, "");
   drawBars($("#bars"), [], 0, "");
 
   $("#refresh").addEventListener("click", async (e) => {
-    e.currentTarget.disabled = true;
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
-      const { body, ms } = await timed("/api/info");
+      const { body, ms } = await timed("/api/info?record=1");
       remember(body.instance);
       showServed(body, ms);
       showChecks(body);
-      showVisits(body.db);
+      setVisits(body.db);
       drawZones();
-    } finally {
-      e.currentTarget.disabled = false;
+    } catch { /* keep what is shown */ } finally {
+      btn.disabled = false;
     }
   });
   $("#burst").addEventListener("click", () => burst(30, 6));
