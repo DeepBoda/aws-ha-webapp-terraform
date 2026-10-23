@@ -93,9 +93,9 @@ variable "db_instance_class" {
 }
 
 variable "db_engine_version" {
-  description = "MySQL engine version."
+  description = "MySQL major version. 8.4 is the LTS release; 8.0 left RDS standard support in July 2026."
   type        = string
-  default     = "8.0"
+  default     = "8.4"
 }
 
 variable "db_name" {

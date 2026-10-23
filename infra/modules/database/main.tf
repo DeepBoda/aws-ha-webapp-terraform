@@ -9,13 +9,18 @@ resource "aws_db_subnet_group" "this" {
 }
 
 resource "aws_db_parameter_group" "this" {
-  name   = "${var.name}-mysql8"
-  family = "mysql8.0"
+  name   = "${var.name}-mysql${replace(var.engine_version, ".", "")}"
+  family = "mysql${var.engine_version}"
 
   # Refuse unencrypted client connections.
   parameter {
     name  = "require_secure_transport"
     value = "1"
+  }
+
+  # A new engine version gets a new group before the old one is removed.
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
