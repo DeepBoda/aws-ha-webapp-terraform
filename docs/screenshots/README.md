@@ -18,7 +18,7 @@ Both instances healthy, one in each AZ.
 ![Auto Scaling Group](03-asg.png)
 
 ### 4. RDS MySQL
-Encrypted storage, credentials managed in Secrets Manager, custom parameter group that requires TLS.
+MySQL 8.4 (LTS), encrypted storage, credentials managed in Secrets Manager, custom parameter group that requires TLS.
 
 ![RDS](04-rds.png)
 
@@ -40,6 +40,6 @@ GitHub has Actions disabled on this account at the moment (a support ticket is o
 ![Application workflow](08-workflow-app.png)
 
 ### 9. Terraform
-Output of the last apply, then a fresh plan against the live account: no changes, so the infrastructure matches the code.
+The apply that moved the database to MySQL 8.4, then a fresh plan against the live account: no changes, so the infrastructure matches the code.
 
 ![Terraform apply and plan](09-terraform-apply.png)
