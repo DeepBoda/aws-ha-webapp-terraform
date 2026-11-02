@@ -1,0 +1,31 @@
+$ cd infra && terraform destroy
+  destroyed module.alb.aws_lb.this
+  destroyed module.certificate.aws_acm_certificate.this
+  destroyed module.compute.aws_autoscaling_group.app
+  destroyed module.compute.aws_launch_template.app
+  destroyed module.database.aws_db_instance.this
+  destroyed module.monitoring.aws_cloudwatch_metric_alarm.this["alb-5xx"]
+  destroyed module.monitoring.aws_cloudwatch_metric_alarm.this["db-cpu"]
+  destroyed module.monitoring.aws_cloudwatch_metric_alarm.this["db-storage"]
+  destroyed module.monitoring.aws_cloudwatch_metric_alarm.this["latency"]
+  destroyed module.monitoring.aws_cloudwatch_metric_alarm.this["unhealthy-targets"]
+  destroyed module.network.aws_nat_gateway.this[0]
+  destroyed module.network.aws_vpc.this
+  destroyed module.storage.aws_s3_bucket.this["app"]
+  destroyed module.storage.aws_s3_bucket.this["logs"]
+Destroy complete! Resources: 71 destroyed.
+
+$ cd bootstrap && terraform destroy   # deploy role and github oidc, state bucket emptied and deleted after
+Destroy complete! Resources: 3 destroyed.
+
+$ check what is left in ap-south-1
+load balancers: 0
+rds instances:  0
+nat gateways:   0
+app instances:  0
+project vpcs:   0
+webapp buckets: 0
+alarms:         0
+
+$ curl -sI https://devops-task.deepboda.in
+no response, stack is gone

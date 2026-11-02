@@ -43,3 +43,11 @@ GitHub has Actions disabled on this account at the moment (a support ticket is o
 The apply that moved the database to MySQL 8.4, then a fresh plan against the live account: no changes, so the infrastructure matches the code.
 
 ![Terraform apply and plan](09-terraform-apply.png)
+
+### 10. Live app on 2 Nov, after the failover test
+One instance was killed on purpose. The new one (`i-043506c80432ba494`) is answering, the other AZ kept serving the whole time.
+
+![App after failover](10-app-after-failover.png)
+
+### Teardown
+The stack was destroyed on 2 Nov 2026 after review. Live checks, failover test and destroy output are in [`../logs`](../logs).

@@ -1,0 +1,7 @@
+$ ./scripts/failover-test.sh
+10:17:42 terminating i-0a68f4fb9ce3489d8
+Terminating EC2 instance: i-0a68f4fb9ce3489d8
+10:18:57 back to 2 healthy targets after 74s
+requests during the test: 43 ok, 0 failed
+i-0ce9c7bd88dc37b9c	healthy
+i-043506c80432ba494	healthy

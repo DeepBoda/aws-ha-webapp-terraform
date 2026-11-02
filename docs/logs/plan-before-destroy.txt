@@ -1,0 +1,5 @@
+$ terraform plan
+  # module.compute.aws_autoscaling_group.app will be updated in-place
+  # module.compute.aws_launch_template.app will be updated in-place
+Plan: 0 to add, 2 to change, 0 to destroy.
+~ image_id                             = "ami-088fb12f8e8397f06" -> "ami-0f19324397f53458f"
